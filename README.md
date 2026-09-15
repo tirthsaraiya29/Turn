@@ -1,530 +1,384 @@
-# Turn
+Turn
 
-> Event-driven workspace automation and context-aware state synchronization across Windows and Android.
+Event-driven workspace automation and context synchronization for Windows and Android.
 
-Turn is an open-source, zero-cloud desktop daemon that brings native **Modes & Routines** to Windows.
+Turn is a local-first automation daemon for Windows that reacts to real operating-system and hardware events instead of continuously polling for changes.
 
-Instead of relying on polling loops, manual toggles, or heavyweight scripting environments, Turn listens directly to native hardware and operating-system events. It applies system-level state transformations and seamlessly relays context to an Android companion device over an encrypted, peer-to-peer local connection.
+It lets you define context-aware modes such as:
 
-When a trigger fires, Turn records an **atomic snapshot** of the relevant environment. When the condition exits, the previous configuration is restored.
+- When my laptop is plugged in and my monitor is connected → enter desk mode.
+- When I launch a game → switch performance settings and audio.
+- When I disconnect from my home network → leave home mode.
+- When my phone is nearby and my PC is docked → synchronize the workspace.
+- When a condition stops being true → restore the state that existed before the mode started.
 
----
+Turn is designed around four ideas:
 
-## ✨ Highlights
+«Listen. Decide. Transform. Restore.»
 
-- **Zero-Polling Hardware Bus** — Binds to kernel and Win32 event brokers such as `WM_POWERBROADCAST`, `INetworkEvents`, `WM_DISPLAYCHANGE`, and Core Audio APIs. Designed to remain effectively idle when nothing happens.
-- **Deterministic Rollback Stack** — Every mode entry pushes modified properties onto an in-memory stack, allowing previous state to be restored without configuration drift.
-- **Peer-to-Peer Cross-Device Sync** — Communicates directly with Android over local Wi-Fi using TLS/TCP, with BLE GATT as a fallback. No cloud account, external broker, or telemetry is required.
-- **Declarative Configuration** — Define automation pipelines using human-readable JSON recipes with compound conditions, hysteresis, debounce windows, and priority overrides.
-- **Headless Recipe Synthesis** — An optional sub-billion-parameter local model compiler can translate natural-language descriptions into schema-validated recipes entirely offline.
-- **Hardware-Aware Automation** — React to displays, power state, audio devices, USB peripherals, network topology, foreground applications, and more.
-- **System-Level Enforcement** — Modify audio routing, performance policies, display settings, notifications, workspace state, firewall rules, and other Windows configuration.
+It does not require a cloud service, automation broker, or permanently running scripting environment.
 
 ---
 
-## 🧠 Philosophy
+Why Turn?
 
-Turn is built around a simple idea:
+Most desktop automation falls into one of two categories:
 
-> **Your computer already knows when something happened. Turn should listen instead of constantly asking.**
+Manual automation
 
-Traditional automation software often relies on:
+You create shortcuts, profiles, or modes and activate them yourself.
 
-```text
-while true:
-    check_condition()
+User
+ │
+ ├── Open application
+ ├── Change power mode
+ ├── Change audio device
+ ├── Enable DND
+ └── Change display settings
+
+Polling automation
+
+A program repeatedly checks whether something changed.
+
+while running:
+    check_power()
+    check_network()
+    check_display()
+    check_processes()
     sleep(...)
 
-Turn instead aims for:
+Turn takes a different approach.
 
-OS / Hardware Event
-        ↓
-Trigger
-        ↓
-Condition Evaluation
-        ↓
-Priority Arbitration
-        ↓
-State Snapshot
-        ↓
-Action Enforcement
-        ↓
-Rollback on Exit
+              Windows / Hardware
+                     │
+                     │ native events
+                     ▼
+              ┌──────────────┐
+              │ Turn Runtime │
+              └──────┬───────┘
+                     │
+              evaluate context
+                     │
+                     ▼
+                enter mode
+                     │
+                     ▼
+              change the system
+                     │
+              condition exits
+                     │
+                     ▼
+               restore state
 
-This makes automations event-driven, deterministic, and easier to reason about.
-
-
----
-
-🏗️ Architecture
-
-┌───────────────────────────────┐
-                      │     SYSTEM & HARDWARE BUS     │
-                      │                               │
-                      │  ACPI Power                   │
-                      │  Network Topology             │
-                      │  Audio Sessions               │
-                      │  Display / EDID               │
-                      │  USB / HID Devices            │
-                      │  Process / Workspace          │
-                      └───────────────┬───────────────┘
-                                      │
-                                      ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                            TURN CORE DAEMON                            │
-│                                                                       │
-│  ┌────────────────────┐   ┌────────────────────┐   ┌───────────────┐ │
-│  │ Event Dispatcher   │──▶│ Condition Engine   │──▶│ Priority Bus  │ │
-│  │                    │   │                    │   │ & Arbiter     │ │
-│  │ Win32 / ETW /      │   │ Compound logic     │   │               │ │
-│  │ Power / Audio /    │   │ Debounce           │   │ Conflicts     │ │
-│  │ Device events      │   │ Hysteresis         │   │ Overrides     │ │
-│  └────────────────────┘   └────────────────────┘   └───────┬───────┘ │
-│                                                             │         │
-│                                                             ▼         │
-│                                               ┌─────────────────────┐ │
-│                                               │ Snapshot & Rollback │ │
-│                                               │ Stack               │ │
-│                                               └──────────┬──────────┘ │
-└──────────────────────────────────────────────────────────┼────────────┘
-                                                           │
-                              ┌────────────────────────────┼────────────────────┐
-                              │                            │                    │
-                              ▼                            ▼                    ▼
-                 ┌──────────────────────┐     ┌──────────────────────┐  ┌───────────────┐
-                 │ WINDOWS ENFORCERS    │     │ MOBILE SYNC RELAY    │  │ LOCAL PARSER  │
-                 │                      │     │                      │  │               │
-                 │ Core Audio           │     │ UDP Discovery        │  │ Natural       │
-                 │ Display              │     │ TLS/TCP              │  │ Language →    │
-                 │ QoS / Affinity       │     │ BLE GATT             │  │ JSON Recipe   │
-                 │ Power Plans          │     │ Android DND          │  │               │
-                 │ Notifications        │     │ Battery / Proximity  │  │ Offline       │
-                 │ Workspace / Shell    │     │ Device Context       │  │ ONNX          │
-                 │ Network / WFP        │     │                      │  │               │
-                 └──────────────────────┘     └──────────┬───────────┘  └───────────────┘
-                                                         │
-                                                         │ Encrypted P2P
-                                                         ▼
-                                                ┌──────────────────────┐
-                                                │ ANDROID COMPANION    │
-                                                │                      │
-                                                │ DND / Notifications  │
-                                                │ Battery              │
-                                                │ Orientation          │
-                                                │ Proximity / BLE      │
-                                                │ Hotspot              │
-                                                └──────────────────────┘
-
+Where Windows provides a suitable event mechanism, Turn prefers it over polling.
 
 ---
 
-⚡ Event-Driven Core
+Features
 
-Turn avoids periodic polling wherever the underlying Windows subsystem exposes an event-driven mechanism.
+Event-driven triggers
 
-The core daemon consists of:
+Turn can consume events from several Windows subsystems.
 
-Win32 Event Dispatcher
+Power
 
-Responsible for receiving native operating-system events through mechanisms including:
+- AC / battery transitions
+- Charging state
+- Battery percentage
+- Power-source changes
 
-SetWinEventHook
+Network
 
-RegisterPowerSettingNotification
+- Wi-Fi network changes
+- SSID changes
+- Network adapter changes
+- Ethernet link changes
+- VPN interface changes
+- Network availability
 
-WM_POWERBROADCAST
+Display
 
-WM_DISPLAYCHANGE
+- Monitor connection/disconnection
+- Display topology changes
+- Monitor identity / EDID information
+- Resolution and refresh-rate changes
+- HDR-related display state where exposed by the platform
 
-WM_DEVICECHANGE
+Audio
 
-Windows Event Tracing (ETW)
+- Default audio endpoint changes
+- Audio device availability
+- Audio-session changes
+- Microphone activity
+- USB audio device connection
 
-Core Audio notifications
+Devices
 
-Network event interfaces
+- USB device arrival/removal
+- Device identification using VID/PID
+- Selected hardware state changes
 
+Processes & workspace
 
-Hysteresis & Debounce Controller
+- Foreground application changes
+- Process creation/termination
+- Full-screen application state where detectable
+- Virtual desktop/workspace changes where supported
 
-Prevents unstable conditions from repeatedly entering and exiting a mode.
+Android context
+
+When paired with the Android companion, Turn can additionally consume device context such as:
+
+- Battery state
+- Device connection state
+- Orientation
+- Proximity information
+- Incoming-call state where permitted
+- Other Android events exposed through the companion's permissions
+
+---
+
+Actions
+
+A trigger only describes when something happens.
+
+An action describes what Turn does.
+
+Turn's Windows enforcers are modular so that new system integrations can be added without changing the core automation engine.
+
+Possible actions include:
+
+Audio
+
+- Change default audio endpoint
+- Adjust master volume
+- Mute/unmute microphone
+- Apply supported per-application audio changes
+
+Performance
+
+- Change Windows power scheme
+- Adjust process power throttling
+- Set process CPU affinity
+- Apply foreground/background performance policies
+
+Display
+
+- Change supported display configuration
+- Change refresh rate
+- Apply display-mode changes
+
+Workspace
+
+- Move windows
+- Apply window layouts
+- Change supported virtual-desktop state
+- Apply Windows theme-related settings
+
+Notifications
+
+- Apply supported Windows notification / focus settings
+
+Security & networking
+
+- Activate/deactivate predefined firewall rules
+- Flush DNS
+- Lock the workstation
+- Clear the clipboard
+
+Android
+
+Where Android permits the operation through its public APIs and granted permissions:
+
+- Synchronize notification state
+- Trigger a haptic confirmation
+- Adjust supported audio states
+- Exchange battery/device context
+- Synchronize workspace modes
+
+«Important: Turn does not bypass Windows or Android security boundaries. Some operations require elevation, explicit permissions, or are restricted by the operating system.»
+
+---
+
+Modes, Not Scripts
+
+Turn recipes describe desired state transitions, rather than arbitrary programs.
 
 For example:
 
-Monitor connected
-      ↓
-Wait 1500 ms
-      ↓
-Still connected?
-      ├── No  → Ignore
-      └── Yes → Enter mode
+Desk detected
+    │
+    ├── Monitor connected
+    ├── Home Wi-Fi connected
+    └── AC power
+          │
+          ▼
+     "Desk Mode"
+          │
+          ├── 144 Hz display
+          ├── DAC as default output
+          ├── Focus configuration
+          └── Android synchronization
 
-Priority Bus & Conflict Arbiter
+When the desk context disappears:
 
-Multiple recipes can react to the same event.
+Desk Mode
+    │
+    ▼
+Context no longer valid
+    │
+    ▼
+Restore captured state
 
-Turn therefore assigns recipes priorities and resolves conflicting actions before enforcement.
-
-Example:
-
-Gaming Mode        priority: 90
-Deep Work          priority: 80
-Normal Workspace   priority: 10
-
-If Gaming Mode and Deep Work both attempt to modify the same property, the higher-priority state wins.
-
-Snapshot & Rollback Stack
-
-Before modifying state, Turn captures the original value.
-
-Initial State
-     │
-     ▼
-┌─────────────────────┐
-│ Volume = 80          │
-│ Power = Balanced     │
-│ Refresh = 60 Hz      │
-│ DND = Off            │
-└──────────┬──────────┘
-           │
-           │ Enter Mode
-           ▼
-┌─────────────────────┐
-│ Volume = 40          │
-│ Power = High         │
-│ Refresh = 144 Hz     │
-│ DND = Priority Only  │
-└──────────┬──────────┘
-           │
-           │ Exit Mode
-           ▼
-┌─────────────────────┐
-│ Restore Snapshot     │
-│ Volume = 80          │
-│ Power = Balanced     │
-│ Refresh = 60 Hz      │
-│ DND = Off            │
-└─────────────────────┘
-
-This avoids relying on hard-coded "restore" values that may overwrite changes made by the user or another automation.
-
+The important part is that Turn does not assume what the previous configuration was.
 
 ---
 
-🔌 Trigger Engine
+Deterministic State & Rollback
 
-Turn can react to multiple classes of events.
+A common problem with automation is configuration drift.
 
-🔋 Power & Battery
+Imagine:
 
-AC connection/disconnection
+Before automation:
 
-Battery charging state
+Volume = 73
+Power Plan = Balanced
+Refresh Rate = 60 Hz
 
-Battery percentage thresholds
+Turn enters a mode:
 
-Discharge-rate anomalies
+Volume = 35
+Power Plan = High Performance
+Refresh Rate = 144 Hz
 
-Power-source changes
+The mode later exits.
 
+A naive automation system might do:
 
-Primary Windows mechanisms include:
+Volume → 100
+Power Plan → Balanced
+Refresh Rate → 60 Hz
 
-RegisterPowerSettingNotification
-WM_POWERBROADCAST
+But the user may have changed the volume to "61" while the mode was active.
 
+Turn instead records the state it actually replaced.
+
+┌─────────────────────────┐
+│ Original State           │
+│                         │
+│ Volume       73          │
+│ Power Plan   Balanced    │
+│ Refresh      60 Hz       │
+└────────────┬────────────┘
+             │
+             │ snapshot
+             ▼
+┌─────────────────────────┐
+│ Active Mode              │
+│                         │
+│ Volume       35          │
+│ Power Plan   High        │
+│ Refresh      144 Hz      │
+└─────────────────────────┘
+
+On exit, Turn restores the captured state subject to its conflict and ownership rules.
 
 ---
 
-🌐 Network & Topology
+State Ownership
 
-Supported trigger concepts include:
+Rollback becomes complicated when multiple modes overlap.
 
-Wi-Fi SSID changes
+For example:
 
-BSSID / access-point transitions
+Normal
+  │
+  ▼
+Desk Mode
+  │
+  ▼
+Gaming Mode
 
-Ethernet link changes
+Both modes may modify volume.
 
-Network adapter changes
+Turn therefore treats system mutations as owned state changes, rather than simply maintaining a list of arbitrary "undo" commands.
 
-VPN tunnel interfaces
+Conceptually:
 
-Network availability
+Property
+   │
+   ├── current value
+   ├── owning mode
+   ├── previous value
+   └── restoration metadata
 
+This allows Turn to reason about:
 
-Example:
+- Mode priority
+- Overlapping modes
+- Conflicting actions
+- Mode exit order
+- External user changes
+- Failed actions
+- Partial rollback
+
+The goal is to prevent one automation from blindly undoing another automation's work.
+
+---
+
+Conditions
+
+Recipes can combine multiple conditions.
+
+Supported logical operators include:
+
+all
+any
+not
+
+A recipe can therefore express:
+
+IF
+
+    monitor == connected
+AND
+    wifi == "Home-5G"
+AND
+    power == AC
+
+THEN
+
+    activate Desk Mode
+
+Conditions can also use:
+
+- Debounce
+- Hysteresis
+- Thresholds
+- Priority
+- Entry/exit semantics
+
+This prevents rapidly changing hardware state from causing mode flapping.
+
+---
+
+Example Recipe
 
 {
-  "type": "network.wifi",
-  "operator": "equals",
-  "ssid": "Home-5G"
-}
-
-
----
-
-🖥️ Display & Graphics
-
-Turn can respond to:
-
-External monitor connection
-
-Monitor removal
-
-EDID changes
-
-Specific monitor identification
-
-HDR state
-
-Refresh-rate constraints
-
-Display topology changes
-
-
-Example:
-
-{
-  "type": "hardware.display",
-  "operator": "connected",
-  "edid": "DEL41A8"
-}
-
-
----
-
-🎧 Audio & Peripherals
-
-Possible triggers include:
-
-Audio endpoint changes
-
-Audio session creation
-
-Microphone session activation
-
-USB device insertion/removal
-
-Specific USB VID/PID devices
-
-
-Example:
-
-USB DAC connected
-       ↓
-Turn detects device
-       ↓
-Deep Work recipe activated
-       ↓
-Default audio endpoint switched
-
-
----
-
-🪟 Process & Workspace
-
-Turn can react to:
-
-Foreground application changes
-
-Process creation
-
-Process termination
-
-Full-screen applications
-
-Workspace transitions
-
-
-Windows foreground changes can be observed through:
-
-EVENT_SYSTEM_FOREGROUND
-
-
----
-
-📱 Mobile Inbound Events
-
-The Android companion can provide context back to Windows.
-
-Examples:
-
-Incoming calls
-
-Android battery thresholds
-
-Device orientation
-
-Phone proximity
-
-BLE RSSI boundaries
-
-Hotspot state
-
-Device connection/disconnection
-
-
-This enables automations such as:
-
-Phone placed face-down
-        ↓
-Android → Turn
-        ↓
-Activate Focus Mode
-        ↓
-Windows DND + audio attenuation
-
-
----
-
-⚙️ Action Engine
-
-Triggers describe when something happens.
-
-Enforcers describe what Turn does about it.
-
-🔊 Audio
-
-Possible actions include:
-
-Change default multimedia endpoint
-
-Change communications endpoint
-
-Master volume adjustment
-
-Per-application volume ducking
-
-Microphone mute
-
-Endpoint routing
-
-
-Relevant Windows interfaces include Core Audio APIs and IAudioSessionNotification.
-
-
----
-
-🚀 Performance & QoS
-
-Turn can manipulate process behavior using Windows facilities such as:
-
-ProcessPowerThrottling
-
-CPU affinity
-
-Foreground/background QoS
-
-Windows power schemes
-
-
-Example:
-
-Coding IDE focused
-        ↓
-Foreground QoS
-        ↓
-Higher scheduling priority / preferred cores
-
-
----
-
-🖥️ Workspace & Shell
-
-Possible actions include:
-
-Virtual desktop transitions
-
-Window positioning
-
-Window snapping
-
-Desktop icon visibility
-
-Dark/light theme changes
-
-Display configuration
-
-
-
----
-
-🔐 Security & Network Boundaries
-
-Turn can optionally perform system-boundary actions such as:
-
-Activate/deactivate local firewall rules
-
-Modify Windows Filtering Platform configuration
-
-Flush DNS cache
-
-Lock workstation
-
-Scrub clipboard contents
-
-
-These actions should be treated as privileged operations and explicitly authorized by the user.
-
-
----
-
-📱 Android Outbound Controls
-
-Turn can relay actions to the Android companion, including:
-
-Enable/disable Do Not Disturb
-
-Mute notification/ringer/media streams
-
-Trigger haptic confirmation
-
-Manage hotspot state
-
-Synchronize workspace state
-
-
-Android permissions and OS restrictions apply to actions available to third-party applications.
-
-
----
-
-📜 Declarative Recipes
-
-Recipes are stored locally at:
-
-%USERPROFILE%\.turn\recipes.json
-
-A recipe describes:
-
-1. What conditions must be satisfied.
-
-
-2. How the recipe should behave under conflicting conditions.
-
-
-3. Which actions should execute.
-
-
-4. Whether each action should participate in rollback.
-
-
-
-Example
-
-{
-  "$schema": "https://raw.githubusercontent.com/username/Turn/main/schema/recipe.v1.json",
+  "$schema": "./schema/recipe.v1.json",
   "name": "Deep Work & Desk Docked",
   "priority": 80,
+
   "debounce_ms": 1500,
 
   "conditions": {
     "all": [
       {
-        "type": "hardware.display",
-        "operator": "connected",
-        "edid": "DEL41A8"
+        "type": "display.connected",
+        "monitor": {
+          "edid": "DEL41A8"
+        }
       },
       {
         "type": "network.wifi",
@@ -532,909 +386,722 @@ Example
         "ssid": "Home-5G"
       },
       {
-        "type": "hardware.power",
+        "type": "power.source",
         "operator": "equals",
-        "source": "ac"
+        "value": "ac"
       }
     ]
   },
 
   "actions": [
     {
-      "enforcer": "windows.audio",
-      "target": "endpoint",
+      "type": "windows.audio.default_endpoint",
       "device_id": "{0.0.0.00000000}.{usb_audio_dac_guid}",
       "rollback": true
     },
     {
-      "enforcer": "windows.display",
-      "refresh_rate_hz": 144,
+      "type": "windows.display.refresh_rate",
+      "value": 144,
       "rollback": true
     },
     {
-      "enforcer": "windows.notifications",
-      "focus_assist": "priority_only",
+      "type": "windows.notifications.focus",
+      "value": "priority_only",
       "rollback": true
     },
     {
-      "enforcer": "android.sync",
-      "action": "set_dnd",
+      "type": "android.sync",
+      "operation": "focus_mode",
       "payload": {
-        "enabled": true,
-        "suppress_visual": true
-      },
-      "rollback": true
+        "enabled": true
+      }
     }
   ]
 }
 
+Recipes live locally:
+
+%USERPROFILE%\.turn\
+├── recipes.json
+├── state.json
+└── identity\
+
+The exact on-disk state format is implementation-defined and should not be modified manually unless documented by the project.
 
 ---
 
-🧩 Recipe Lifecycle
+Recipe Lifecycle
 
-A recipe follows this lifecycle:
+Every active recipe moves through a state machine.
 
-┌──────────────────────┐
-                    │       INACTIVE       │
-                    └──────────┬───────────┘
-                               │
-                         Event received
+                    ┌─────────────┐
+                    │   INACTIVE  │
+                    └──────┬──────┘
+                           │
+                       OS event
+                           │
+                           ▼
+                 ┌──────────────────┐
+                 │ Evaluate Context │
+                 └────────┬─────────┘
+                          │
+                    conditions?
+                    ┌─────┴─────┐
+                   no           yes
+                   │             │
+                   │             ▼
+                   │       Debounce /
+                   │       Hysteresis
+                   │             │
+                   │             ▼
+                   │       Priority Check
+                   │             │
+                   │             ▼
+                   │       Capture State
+                   │             │
+                   │             ▼
+                   │       Apply Actions
+                   │             │
+                   │             ▼
+                   │        ┌─────────┐
+                   └───────▶│ ACTIVE  │
+                            └────┬────┘
+                                 │
+                          exit condition
+                                 │
+                                 ▼
+                         Restore State
+                                 │
+                                 ▼
+                            INACTIVE
+
+---
+
+Architecture
+
+Turn is divided into independent layers.
+
+┌──────────────────────────────────────────────────────────────┐
+│                         TURN UI                              │
+│                  WinUI 3 / System Tray                      │
+└──────────────────────────────┬───────────────────────────────┘
                                │
                                ▼
-                    ┌──────────────────────┐
-                    │ CONDITION EVALUATION │
-                    └──────────┬───────────┘
-                               │
-                        Conditions true?
-                         ┌─────┴─────┐
-                        No           Yes
-                        │             │
-                        ▼             ▼
-                     Ignore      Debounce /
-                                  Hysteresis
-                                      │
-                                      ▼
-                             ┌────────────────┐
-                             │ PRIORITY CHECK │
-                             └───────┬────────┘
-                                     │
-                                     ▼
-                             Snapshot State
-                                     │
-                                     ▼
-                              Apply Actions
-                                     │
-                                     ▼
-                            ┌────────────────┐
-                            │     ACTIVE     │
-                            └───────┬────────┘
-                                    │
-                              Exit condition
-                                    │
-                                    ▼
-                            Restore Snapshot
-                                    │
-                                    ▼
-                             ┌──────────────┐
-                             │   INACTIVE   │
-                             └──────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       TURN RUNTIME                           │
+│                                                              │
+│  Event Bus → Condition Engine → Priority Arbiter             │
+│                         │                                    │
+│                         ▼                                    │
+│                State / Ownership Manager                     │
+│                         │                                    │
+│                         ▼                                    │
+│                    Action Engine                             │
+└───────────────┬─────────────────────────┬────────────────────┘
+                │                         │
+                ▼                         ▼
+┌──────────────────────────┐   ┌──────────────────────────────┐
+│   WINDOWS ENFORCERS      │   │       MOBILE RELAY           │
+│                          │   │                              │
+│ Audio                    │   │ Discovery                    │
+│ Display                  │   │ Pairing                      │
+│ Power                    │   │ Transport                    │
+│ QoS                      │   │ Android state                │
+│ Workspace                │   │                              │
+│ Network                  │   │                              │
+└──────────────────────────┘   └──────────────┬───────────────┘
+                                               │
+                                               │ local P2P
+                                               ▼
+                                    ┌─────────────────────┐
+                                    │ Android Companion   │
+                                    └─────────────────────┘
 
-
----
-
-📡 Peer-to-Peer Mobile Sync
-
-Turn does not require a cloud service.
-
-The Windows daemon and Android companion communicate directly.
-
-┌───────────────────┐
-│   Windows PC      │
-│                   │
-│   Turn Daemon     │
-└─────────┬─────────┘
-          │
-          │ Local Wi-Fi
-          │ UDP Discovery
-          │ TLS/TCP
-          │
-          │ fallback
-          │
-          │ BLE GATT
-          │
-          ▼
-┌───────────────────┐
-│  Android Device   │
-│                   │
-│  Turn Companion   │
-└───────────────────┘
-
-Pairing
-
-The initial pairing process is designed around local verification:
-
-Windows                         Android
-   │                               │
-   │◄──── Local Discovery ─────────│
-   │                               │
-   │──── Ephemeral SAS ───────────►│
-   │                               │
-   │◄──── User Verification ───────│
-   │                               │
-   │──── Ed25519 Key Exchange ────►│
-   │                               │
-   │◄════ Encrypted Session ══════►│
-
-After pairing, communication uses authenticated cryptography.
-
-The intended transport stack is:
-
-Wi-Fi
-  │
-  ├── UDP Discovery
-  │
-  └── TLS/TCP
-          │
-          ▼
-   Application Protocol
-
-BLE fallback
-  │
-  └── GATT Characteristic Pipe
-
-Traffic is intended to be protected with:
-
-Ed25519 identity keys
-
-ChaCha20-Poly1305 authenticated encryption
-
-Ephemeral session material
-
-Short Authentication String (SAS) verification
-
-
-No cloud relay is required.
-
+             ┌──────────────────────────────┐
+             │     OPTIONAL PARSER          │
+             │                              │
+             │ Natural Language             │
+             │       ↓                      │
+             │ Local Model                  │
+             │       ↓                      │
+             │ Recipe Compiler              │
+             │       ↓                      │
+             │ Schema + Semantic Validation │
+             └──────────────────────────────┘
 
 ---
 
-🤖 Optional Local Recipe Compiler
-
-Turn can optionally include a small local model that translates natural-language automation requests into structured recipes.
-
-For example:
-
-User:
-
-"When I connect my monitor at home while plugged in,
-put my PC into deep work mode and silence my phone."
-
-             │
-             ▼
-       Local Model
-             │
-             ▼
-      Recipe Compiler
-             │
-             ▼
-      Schema Validator
-             │
-             ▼
-       Valid Recipe
-             │
-             ▼
-          Turn Core
-
-The model is optional and runs locally.
-
-It should never be trusted as the final authority over system actions.
-
-The compiler pipeline therefore follows:
-
-Natural Language
-       ↓
-Local Model
-       ↓
-Structured Recipe
-       ↓
-JSON Schema Validation
-       ↓
-Semantic Validation
-       ↓
-Conflict / Permission Validation
-       ↓
-User Approval
-       ↓
-Recipe Installation
-
-
----
-
-🗂️ Project Structure
+Project Structure
 
 Turn/
+│
 ├── src/
 │   │
 │   ├── Turn.Daemon/
 │   │   ├── Core/
-│   │   │   ├── StateMachine
-│   │   │   ├── PriorityArbiter
-│   │   │   ├── SnapshotStack
-│   │   │   └── RecipeRuntime
+│   │   │   ├── Runtime/
+│   │   │   ├── State/
+│   │   │   ├── Ownership/
+│   │   │   ├── Conditions/
+│   │   │   └── Arbitration/
 │   │   │
-│   │   ├── Triggers/
-│   │   │   ├── Power
-│   │   │   ├── Network
-│   │   │   ├── Display
-│   │   │   ├── Audio
-│   │   │   ├── Devices
-│   │   │   ├── Processes
-│   │   │   └── Workspace
+│   │   ├── Events/
+│   │   │   ├── Power/
+│   │   │   ├── Network/
+│   │   │   ├── Display/
+│   │   │   ├── Audio/
+│   │   │   ├── Devices/
+│   │   │   └── Processes/
 │   │   │
 │   │   ├── Enforcers/
-│   │   │   ├── Audio
-│   │   │   ├── Display
-│   │   │   ├── Power
-│   │   │   ├── QoS
-│   │   │   ├── Notifications
-│   │   │   ├── Workspace
-│   │   │   └── Network
+│   │   │   ├── Audio/
+│   │   │   ├── Display/
+│   │   │   ├── Power/
+│   │   │   ├── QoS/
+│   │   │   ├── Workspace/
+│   │   │   ├── Notifications/
+│   │   │   └── Network/
 │   │   │
 │   │   └── Relay/
-│   │       ├── Discovery
-│   │       ├── TLS
-│   │       ├── Protocol
-│   │       └── BLE
+│   │       ├── Discovery/
+│   │       ├── Pairing/
+│   │       ├── Transport/
+│   │       └── Protocol/
 │   │
 │   ├── Turn.Mobile/
-│   │   ├── app/
-│   │   │   └── src/
-│   │   │       └── main/
-│   │   │           └── kotlin/
-│   │   └── gradle/
+│   │   └── app/
+│   │       └── src/
+│   │           └── main/
+│   │               └── kotlin/
 │   │
 │   ├── Turn.Parser/
-│   │   ├── Model
-│   │   ├── Compiler
-│   │   ├── SchemaValidator
-│   │   └── SemanticValidator
+│   │   ├── Compiler/
+│   │   ├── Validation/
+│   │   └── Model/
 │   │
 │   └── Turn.UI/
-│       ├── Views
-│       ├── ViewModels
-│       ├── Tray
-│       └── Settings
+│       ├── Views/
+│       ├── ViewModels/
+│       ├── Tray/
+│       └── Settings/
 │
 ├── schema/
 │   └── recipe.v1.json
 │
 ├── tests/
 │   ├── Core/
-│   ├── Triggers/
+│   ├── Events/
 │   ├── Enforcers/
 │   ├── Relay/
 │   ├── Recipes/
-│   ├── MockHardware/
+│   ├── Integration/
+│   ├── Mock/
 │   └── Fuzz/
 │
 ├── docs/
+│
 ├── LICENSE
 └── README.md
 
+---
+
+Event Sources
+
+Turn intentionally uses native Windows mechanisms where possible.
+
+Examples include:
+
+Event| Possible Windows mechanism
+Power changes| Power setting notifications / "WM_POWERBROADCAST"
+Device arrival| "WM_DEVICECHANGE"
+Foreground window| WinEvent hooks
+Display changes| Display configuration APIs / display notifications
+Audio changes| Windows Core Audio notifications
+Process events| ETW / Windows process notifications
+Network changes| Windows networking APIs
+System telemetry| ETW where appropriate
+
+The implementation should use the narrowest reliable event source available instead of introducing a polling loop simply for convenience.
 
 ---
 
-🛠️ Getting Started
+Windows Integration
 
-Requirements
+Turn is intended to remain a normal user-space application.
 
-Windows Host
+It does not require a kernel driver for its core automation functionality.
 
-Windows 10, build 19041 or newer
+Some operations may require:
 
-Windows 11
+- Administrator privileges
+- Specific Windows capabilities
+- User consent
+- Access to interfaces that are restricted or undocumented
 
-Visual Studio 2022 with C++ Desktop Development workload or
+Platform-specific integrations should remain isolated inside the relevant enforcer.
 
-.NET 8 SDK
+For example:
 
-Windows SDK 10.0.22621.0 or newer
+Turn Runtime
+     │
+     ▼
+Audio Enforcer Interface
+     │
+     ├── Core Audio implementation
+     └── Windows-specific endpoint implementation
 
+The core engine should not need to know how Windows changes the audio endpoint.
+
+---
 
 Android Companion
 
-Android 8.0 / API 26 or newer
+The Android application acts as Turn's mobile context provider and remote endpoint.
 
-BLE peripheral support for BLE fallback
+                    Local Network
+┌─────────────────┐                 ┌─────────────────┐
+│                 │                 │                 │
+│  Turn Windows   │◄───────────────►│  Turn Android   │
+│                 │                 │                 │
+└─────────────────┘                 └─────────────────┘
 
+The companion can provide context that Windows cannot observe directly.
 
+For example:
 
----
+Phone battery < 20%
+        │
+        ▼
+Android Companion
+        │
+        ▼
+Encrypted local connection
+        │
+        ▼
+Turn
+        │
+        ▼
+Activate battery-saving workstation mode
 
-📦 Building the Windows Daemon
-
-Clone the repository:
-
-git clone https://github.com/username/Turn.git
-cd Turn
-
-Build a self-contained release:
-
-dotnet publish `
-    src/Turn.Daemon/Turn.Daemon.csproj `
-    -c Release `
-    -r win-x64 `
-    --self-contained
-
-The resulting executable will be located under:
-
-src/Turn.Daemon/bin/Release/
-
-
----
-
-▶️ Running Turn
-
-Initialize the default recipes and install the daemon:
-
-.\src\Turn.Daemon\bin\Release\net8.0-windows\win-x64\publish\Turn.Daemon.exe --install
-
-Run interactively during development:
-
-Turn.Daemon.exe --run
-
-Display diagnostic information:
-
-Turn.Daemon.exe --diagnostics
-
+Android functionality is deliberately permission-aware. Turn does not attempt to circumvent Android's security model.
 
 ---
 
-📱 Building the Android Companion
+Local Pairing
 
-Navigate to the mobile project:
+Turn is designed to operate without a cloud account.
 
-cd src/Turn.Mobile
+Initial pairing can use:
 
-Build the debug APK:
+Windows                         Android
+   │                               │
+   │◄──── Local discovery ─────────│
+   │                               │
+   │──── Pairing request ─────────►│
+   │                               │
+   │◄──── Authentication data ─────│
+   │                               │
+   │──── User verifies SAS ───────►│
+   │                               │
+   │◄════ Authenticated channel ══►│
 
-./gradlew assembleDebug
+The implementation should establish a persistent device identity and authenticate subsequent connections rather than trusting devices solely because they are present on the local network.
 
-Install it on a connected device:
+The transport may use:
 
-adb install app/build/outputs/apk/debug/app-debug.apk
+- Local Wi-Fi
+- TCP
+- TLS
+- BLE GATT fallback
 
-
----
-
-🔐 Local Pairing
-
-1. Start Turn on the Windows workstation.
-
-
-2. Launch the Android companion.
-
-
-3. Ensure Wi-Fi or Bluetooth is enabled.
-
-
-4. Select Pair Workstation.
-
-
-5. Select the discovered Windows workstation.
-
-
-6. Compare the displayed Short Authentication String (SAS).
-
-
-7. Approve the pairing on both devices.
-
-
-8. Turn establishes the local cryptographic identity.
-
-
-9. Subsequent communication uses the authenticated local connection.
-
-
-
-Turn does not require:
-
-A cloud account
-
-A central server
-
-An external message broker
-
-Telemetry
-
-Internet connectivity for normal operation
-
-
+Cryptographic implementation details belong to the protocol specification and should use established libraries rather than custom cryptography.
 
 ---
 
-🧪 Verification & Test Harness
+Privacy
 
-Turn includes a hardware-independent simulation environment for testing recipes without changing the real system.
+Turn follows a local-first model.
 
-Run the mock hardware assertion suite:
+By default:
+
+- No cloud account
+- No remote automation server
+- No telemetry
+- No third-party broker
+- Recipes remain local
+- Context processing occurs locally
+- Mobile synchronization happens directly between paired devices
+
+Internet access should not be required for ordinary automation.
+
+---
+
+Local Recipe Compiler
+
+Turn can optionally include a small local model for generating recipes from natural language.
+
+Example:
+
+"Whenever I connect my monitor at home while charging,
+turn on deep work mode."
+
+                    │
+                    ▼
+             Local model
+                    │
+                    ▼
+             Recipe compiler
+                    │
+                    ▼
+             JSON Schema check
+                    │
+                    ▼
+           Semantic validation
+                    │
+                    ▼
+              User approval
+                    │
+                    ▼
+                Recipe
+
+The model is not given unrestricted authority over the machine.
+
+Generated recipes must pass validation before installation.
+
+Recommended pipeline:
+
+Natural language
+       ↓
+Local model
+       ↓
+Structured recipe
+       ↓
+Schema validation
+       ↓
+Semantic validation
+       ↓
+Permission analysis
+       ↓
+Conflict analysis
+       ↓
+User approval
+       ↓
+Installation
+
+This keeps the model responsible for translation, not system authority.
+
+---
+
+Testing
+
+Turn includes a hardware-independent test environment.
+
+The goal is to test the automation engine without changing the real computer.
+
+Example:
 
 Turn.Daemon.exe `
     --test-harness `
     --recipe "Deep Work & Desk Docked" `
     --simulate "ac_disconnect"
 
-A simulated event should pass through the same logical pipeline as a real event:
+The simulated event follows the same logical pipeline:
 
 Simulated Event
       ↓
-Trigger Dispatcher
+Event Bus
       ↓
 Condition Engine
       ↓
 Priority Arbiter
       ↓
-Snapshot Manager
+State Manager
       ↓
 Mock Enforcer
       ↓
-Assertion
+Assertions
       ↓
 Rollback Verification
 
-The test harness should verify:
+Tests should cover:
 
-Condition matching
-
-Debounce behavior
-
-Hysteresis
-
-Priority resolution
-
-Snapshot creation
-
-Action ordering
-
-Rollback integrity
-
-Recipe conflicts
-
-Invalid recipes
-
-Repeated enter/exit cycles
-
-Hardware event ordering
-
-Failure recovery
-
-
+- Condition evaluation
+- Compound conditions
+- Debouncing
+- Hysteresis
+- Priority conflicts
+- State snapshots
+- Ownership
+- Mode entry
+- Mode exit
+- Rollback
+- Failed actions
+- Partial execution
+- Device disappearance
+- Reordered events
+- Duplicate events
+- Invalid recipes
+- Concurrent modes
 
 ---
 
-🧪 Fuzzing
+Fuzz Testing
 
-Recipe parsing and event handling should be fuzz-tested because Turn processes externally influenced state and declarative configuration.
+Recipes and event streams are untrusted inputs and should be fuzz-tested.
 
-Areas suitable for fuzzing include:
+Important targets include:
 
-JSON Recipe Parser
-        │
-        ├── malformed JSON
-        ├── deeply nested conditions
-        ├── unknown operators
-        ├── invalid action payloads
-        ├── conflicting priorities
-        └── extreme debounce values
+Recipe Parser
+    ├── malformed JSON
+    ├── unknown condition types
+    ├── invalid operators
+    ├── deeply nested expressions
+    ├── oversized payloads
+    └── invalid action parameters
 
-Event Dispatcher
-        │
-        ├── duplicate events
-        ├── reordered events
-        ├── rapid state changes
-        └── unexpected device removal
+Runtime
+    ├── duplicate events
+    ├── event storms
+    ├── reordered events
+    ├── device disappearance
+    ├── failed actions
+    └── rapid enter/exit cycles
 
-A malformed recipe should never result in an uncontrolled system mutation.
-
-
----
-
-🔄 Rollback Guarantees
-
-Turn's rollback model is based on captured state rather than assumptions.
-
-Instead of:
-
-Enter mode:
-    Set volume = 30
-
-Exit mode:
-    Set volume = 100
-
-Turn aims to perform:
-
-Enter mode:
-    Capture volume = 67
-    Set volume = 30
-
-Exit mode:
-    Restore volume = 67
-
-This distinction matters when the user's configuration changes before the mode exits.
-
-Nested Modes
-
-Nested state changes can be represented as a stack:
-
-Initial
-  │
-  ├── Volume: 70
-  └── Power: Balanced
-        │
-        ▼
-Deep Work
-  │
-  ├── Snapshot #1
-  ├── Volume: 40
-  └── Power: High Performance
-        │
-        ▼
-Presentation Mode
-  │
-  ├── Snapshot #2
-  ├── Volume: 25
-  └── Power: Balanced
-
-When Presentation Mode exits:
-
-Restore Snapshot #2
-        ↓
-Return to Deep Work
-
-When Deep Work exits:
-
-Restore Snapshot #1
-        ↓
-Return to Initial State
-
-The implementation must additionally detect stale snapshots and external mutations so that rollback does not blindly overwrite legitimate user changes.
-
+A malformed recipe must never result in arbitrary system modification.
 
 ---
 
-🧭 Design Principles
+Requirements
 
-1. Event-driven first
+Windows
 
-If Windows exposes an appropriate event mechanism, Turn should prefer it over polling.
+- Windows 10 version 2004 / build 19041 or newer
+- Windows 11
+- Windows SDK 10.0.22621 or newer
+- .NET 8 SDK
+- Visual Studio 2022 for native Windows components
 
-2. Local first
+Android
 
-Core automation should continue working without an internet connection.
-
-3. User state is sacred
-
-Turn should restore what the user actually had rather than a hard-coded approximation.
-
-4. Declarative over imperative
-
-Recipes should describe desired behavior rather than embedding arbitrary scripts.
-
-5. Explicit privileges
-
-Actions requiring elevated privileges should be clearly identified and separately authorized.
-
-6. Fail closed
-
-Invalid or ambiguous recipes should not produce uncontrolled system mutations.
-
-7. Deterministic execution
-
-The same event sequence and starting state should produce the same resulting state.
-
-8. Replaceable components
-
-Triggers, enforcers, transports, parsers, and models should be modular rather than deeply coupled.
-
-9. No unnecessary cloud
-
-A local automation daemon should not need a remote service simply to react to a local event.
-
+- Android 8.0 / API 26 or newer
+- Bluetooth LE support for BLE transport
+- Permissions required by the specific Android features enabled
 
 ---
 
-🔒 Security Model
+Building
 
-Turn operates close to the operating system and therefore treats security as a first-class concern.
+Clone
 
-Important boundaries include:
+git clone https://github.com/username/Turn.git
+cd Turn
 
-┌─────────────────────┐
-                 │ Untrusted Recipe    │
-                 └──────────┬──────────┘
-                            │
-                            ▼
-                    Schema Validation
-                            │
-                            ▼
-                   Semantic Validation
-                            │
-                            ▼
-                  Permission Evaluation
-                            │
-                            ▼
-                    Action Dispatcher
-                            │
-                            ▼
-                 Privileged OS Enforcer
+Build the daemon
 
-The Android connection should similarly treat the phone as an authenticated peer rather than automatically trusted network traffic.
+dotnet build Turn.sln -c Release
 
-Security-sensitive operations should include:
+For a self-contained Windows build:
 
-Authentication
+dotnet publish `
+    src/Turn.Daemon/Turn.Daemon.csproj `
+    -c Release `
+    -r win-x64 `
+    --self-contained true
 
-Authorization
+Build Android
 
-Replay protection
+cd src/Turn.Mobile
+./gradlew assembleDebug
 
-Secure key storage
+Install a debug build:
 
-Transport encryption
-
-Pairing verification
-
-Input validation
-
-Least-privilege execution
-
-Explicit permission boundaries
-
-Audit-friendly event logging
-
-
+adb install app/build/outputs/apk/debug/app-debug.apk
 
 ---
 
-📊 Resource Goals
+Development
 
-Turn is designed to behave like a native operating-system component rather than a continuously active scripting runtime.
+Run the daemon interactively:
 
-Target characteristics:
+Turn.Daemon.exe --run
 
-Component	Goal
+Run diagnostics:
 
-Core daemon idle CPU	<0.1% target
-Cloud dependency	None
-External broker	None
-Polling loops	Avoided where native events exist
-Configuration	Local JSON
-Mobile sync	Local P2P
-Recipe compiler	Optional
-Model execution	Local/offline
-Rollback	In-memory snapshots
-Hardware testing	Mockable
+Turn.Daemon.exe --diagnostics
 
+Run the recipe test harness:
 
-These are engineering targets rather than guarantees; actual resource consumption depends on enabled listeners, hardware, Windows configuration, and workload.
-
+Turn.Daemon.exe `
+    --test-harness `
+    --recipe "Deep Work & Desk Docked" `
+    --simulate "ac_connect"
 
 ---
 
-🧱 Technology Stack
+Design Principles
 
-Component	Technology
+1. Events over polling
 
-Windows Daemon	.NET 8 / native Windows APIs
-Windows UI	WinUI 3
-System Integration	Win32 / Windows SDK
-Event Sources	Win32 / ETW / Windows subsystem APIs
-Audio	Windows Core Audio
-Network	Windows networking APIs
-Security	Windows security primitives + modern cryptography
-Mobile	Kotlin
-Android	API 26+
-Mobile Transport	Wi-Fi + BLE GATT
-Recipe Format	JSON
-Schema	JSON Schema
-Local Model	ONNX
-Testing	Unit tests + mock hardware + fuzzing
+If the operating system can tell us that something happened, listen to it.
 
+2. State over commands
 
+A mode represents a desired state, not a collection of irreversible commands.
 
----
+3. Capture before mutation
 
-🗺️ Roadmap
+Do not assume what the system looked like before Turn changed it.
 
-Phase 1 — Core
+4. Explicit ownership
 
-[ ] Recipe schema
+Multiple automations must be able to coexist without blindly undoing each other's changes.
 
-[ ] Event dispatcher
+5. Local by default
 
-[ ] Condition engine
+The core automation engine should work without an internet connection.
 
-[ ] Debounce / hysteresis
+6. Least privilege
 
-[ ] Priority arbiter
+A feature should not require administrator access merely because another feature does.
 
-[ ] Snapshot manager
+7. Models do not get root authority
 
-[ ] Rollback engine
+Natural-language generation may create a recipe, but validation and explicit policy remain responsible for execution.
 
-[ ] Mock event bus
+8. Deterministic execution
 
+Given the same initial state, event sequence, and recipe set, the runtime should produce predictable results.
 
-Phase 2 — Windows Integration
+9. Failure is a state
 
-[ ] Power triggers
+Actions can fail. Devices can disappear. Processes can terminate.
 
-[ ] Network triggers
-
-[ ] Display triggers
-
-[ ] Device triggers
-
-[ ] Audio triggers
-
-[ ] Foreground-process triggers
-
-[ ] Audio enforcer
-
-[ ] Display enforcer
-
-[ ] Power-plan enforcer
-
-[ ] QoS enforcer
-
-[ ] Notification enforcer
-
-
-Phase 3 — Mobile
-
-[ ] Android companion
-
-[ ] Local discovery
-
-[ ] Secure pairing
-
-[ ] TLS/TCP transport
-
-[ ] BLE fallback
-
-[ ] Battery events
-
-[ ] Orientation events
-
-[ ] Proximity events
-
-[ ] Android DND integration
-
-
-Phase 4 — UI
-
-[ ] System tray integration
-
-[ ] Recipe editor
-
-[ ] Active-mode dashboard
-
-[ ] Event timeline
-
-[ ] Snapshot inspector
-
-[ ] Permission management
-
-[ ] Pairing UI
-
-
-Phase 5 — Local Intelligence
-
-[ ] Natural-language recipe generation
-
-[ ] Local ONNX model
-
-[ ] Schema validation
-
-[ ] Semantic validation
-
-[ ] Human approval workflow
-
-[ ] Recipe repair suggestions
-
-
+Turn should model those situations rather than assuming every action succeeds.
 
 ---
 
-🤝 Contributing
+Roadmap
+
+Core Runtime
+
+- [ ] Recipe schema v1
+- [ ] Event bus
+- [ ] Condition engine
+- [ ] Debounce
+- [ ] Hysteresis
+- [ ] Priority arbitration
+- [ ] State ownership
+- [ ] Snapshot manager
+- [ ] Rollback engine
+- [ ] Mock event bus
+
+Windows
+
+- [ ] Power events
+- [ ] Network events
+- [ ] Display events
+- [ ] Audio events
+- [ ] USB/device events
+- [ ] Process events
+- [ ] Foreground-window events
+- [ ] Audio enforcer
+- [ ] Power-plan enforcer
+- [ ] Display enforcer
+- [ ] QoS enforcer
+- [ ] Workspace enforcer
+- [ ] Notification enforcer
+- [ ] Network enforcer
+
+Android
+
+- [ ] Companion application
+- [ ] Local discovery
+- [ ] Device pairing
+- [ ] Authenticated transport
+- [ ] BLE fallback
+- [ ] Battery context
+- [ ] Orientation context
+- [ ] Proximity context
+- [ ] Notification synchronization
+
+UI
+
+- [ ] System tray
+- [ ] Recipe editor
+- [ ] Active modes
+- [ ] Event timeline
+- [ ] State inspector
+- [ ] Permission manager
+- [ ] Device pairing
+- [ ] Diagnostics
+
+Local Intelligence
+
+- [ ] Local recipe compiler
+- [ ] ONNX inference
+- [ ] Recipe schema generation
+- [ ] Semantic validation
+- [ ] Permission analysis
+- [ ] Conflict analysis
+- [ ] Natural-language recipe repair
+
+---
+
+Contributing
 
 Contributions are welcome.
 
-Before submitting a pull request:
+When adding a new integration:
 
-1. Keep platform-specific code isolated.
-
-
-2. Add tests for new trigger/enforcer behavior.
-
-
-3. Avoid introducing polling when an event-driven API exists.
-
-
-4. Ensure new state mutations have rollback semantics where appropriate.
-
-
-5. Validate all externally supplied recipe data.
-
-
-6. Document required Windows permissions.
-
-
-7. Test failure and device-disconnect scenarios.
-
-
-8. Keep the daemon functional without cloud services.
-
-
-
+1. Keep platform-specific code inside an enforcer or event provider.
+2. Prefer native event notifications over polling.
+3. Add a mock implementation where practical.
+4. Define rollback behavior for reversible state mutations.
+5. Handle partial failure explicitly.
+6. Validate all recipe input.
+7. Add tests for enter, active, exit, and failure states.
+8. Document required permissions or privileges.
+9. Do not introduce cloud dependencies into the core runtime.
+10. Do not add custom cryptographic primitives.
 
 ---
 
-⚠️ Platform Notes
+License
 
-Turn interacts with operating-system APIs that may have different capabilities or restrictions across Windows versions.
+Turn is open-source software.
 
-Some functionality may require:
-
-Administrator privileges
-
-Specific Windows APIs
-
-Hardware support
-
-User-granted Android permissions
-
-Android foreground-service permissions
-
-Bluetooth permissions
-
-Windows-specific interfaces that are not officially documented
-
-
-Features should therefore degrade gracefully when the underlying platform does not expose the required capability.
-
+The project license will be defined in ""LICENSE"" (LICENSE).
 
 ---
 
-📄 License
+Status
 
-Turn is intended to be released as open-source software.
+«Turn is under active development.»
 
-Choose and document the project's license in LICENSE before public release.
-
+The architecture described above represents the intended design. Individual Windows and Android integrations may not yet be implemented, and platform restrictions may limit what can be automated without elevated privileges or explicit user permissions.
 
 ---
 
-🌐 Project
+The idea
 
-Turn
-Event-driven automation for Windows, synchronized locally with Android.
+                    TURN
+                     │
+                     ▼
+             Observe the context
+                     │
+                     ▼
+              Understand the state
+                     │
+                     ▼
+              Enter the right mode
+                     │
+                     ▼
+             Transform the system
+                     │
+                     ▼
+              Context disappears
+                     │
+                     ▼
+              Restore what changed
 
-Native Events
-     ↓
-Context
-     ↓
-Conditions
-     ↓
-Priority
-     ↓
-Snapshot
-     ↓
-Enforcement
-     ↓
-P2P Synchronization
-     ↓
-Deterministic Rollback
-
-> Turn listens to your environment, transforms it when the context changes, and puts it back when the moment is over.
+Turn makes your devices respond to where you are, what you're doing, and what your environment is telling them — without requiring the cloud to be involved.
