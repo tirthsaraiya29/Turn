@@ -1,0 +1,71 @@
+# ==========================================
+# Turn Project .gitignore
+# ==========================================
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.user
+.vs/
+
+# ==========================================
+# C++ / CMake Daemon Build Artifacts
+# ==========================================
+build/
+bin/
+out/
+CMakeCache.txt
+CMakeFiles/
+cmake-build-debug/
+cmake-build-release/
+*.obj
+*.exe
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.ipch
+
+# ==========================================
+# Python Parser Artifacts
+# ==========================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ==========================================
+# Android / Kotlin Companion Artifacts
+# ==========================================
+mobile/.gradle/
+mobile/build/
+mobile/app/build/
+mobile/local.properties
+mobile/.idea/
+*.iml
+.gradle/
+
+# ==========================================
+# Testing & Local Runtime Data
+# ==========================================
+*.log
+.turn/
+tests/output/
